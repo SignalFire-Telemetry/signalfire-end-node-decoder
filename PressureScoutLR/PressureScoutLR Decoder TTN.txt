@@ -1,0 +1,120 @@
+// SignalFire PressureScoutLR Decoder TTN
+
+// PressureScoutLR Device Types:
+const PRESSURE_SCOUT_LR_2_PSI       = 0x10;
+const PRESSURE_SCOUT_LR_20_PSI      = 0x11;
+const PRESSURE_SCOUT_LR_100_PSI     = 0x12;
+const PRESSURE_SCOUT_LR_500_PSI     = 0x13;
+const PRESSURE_SCOUT_LR_1000_PSI    = 0x14;
+const PRESSURE_SCOUT_LR_3000_PSI    = 0x15;
+const PRESSURE_SCOUT_LR_5000_PSI    = 0x16;
+const PRESSURE_SCOUT_LR_10000_PSI   = 0x17;
+const PRESSURE_SCOUT_LR_15000_PSI   = 0x18;
+const PRESSURE_SCOUT_LR_20000_PSI   = 0x19;
+const PRESSURE_SCOUT_LR_UNKNOWN_PSI = 0x1A;
+
+function decodePressure(device_type, high_byte, low_byte)
+{
+    var pressure = (high_byte * 256) + low_byte;
+    if (pressure >= 32768)
+    {
+        pressure -= 65536;
+    }
+
+    switch (device_type)
+    {
+        // 1000x multiplier
+        case PRESSURE_SCOUT_LR_2_PSI:
+        case PRESSURE_SCOUT_LR_20_PSI:
+            return pressure / 1000;
+
+        // 100x multiplier
+        case PRESSURE_SCOUT_LR_100_PSI:
+            return pressure / 100;
+
+        // 10x multiplier
+        case PRESSURE_SCOUT_LR_500_PSI:
+        case PRESSURE_SCOUT_LR_1000_PSI:
+        case PRESSURE_SCOUT_LR_3000_PSI:
+            return pressure / 10;
+
+        // 1x multiplier
+        case PRESSURE_SCOUT_LR_5000_PSI:
+        case PRESSURE_SCOUT_LR_10000_PSI:
+        case PRESSURE_SCOUT_LR_15000_PSI:
+        case PRESSURE_SCOUT_LR_20000_PSI:
+        case PRESSURE_SCOUT_LR_UNKNOWN_PSI:
+        default:
+            return pressure / 1;
+    }
+}
+
+function Decoder(bytes, port)
+{
+    var decode = {};
+    var device_type = bytes[0];
+
+    if ((device_type < 0x10) || (device_type > 0x1A))
+    {
+        decode.error_msg = "Invalid uplink device type: 0x" + device_type.toString(16);
+        return decode;
+    }
+
+    decode.device_type = "0x" + device_type.toString(16);
+
+    if (port == 1)
+    {
+        if (bytes.length != 10)
+        {
+            decode.error_msg = "Invalid FPort 1 uplink length: " + bytes.length;
+        }
+        else
+        {
+            decode.pressure_psi = decodePressure(device_type, bytes[1], bytes[2]);
+            decode.pressure_avg_psi = decodePressure(device_type, bytes[3], bytes[4]);
+            decode.pressure_max_psi = decodePressure(device_type, bytes[5], bytes[6]);
+            decode.pressure_min_psi = decodePressure(device_type, bytes[7], bytes[8]);
+            decode.status = "0x" + bytes[9].toString(16);
+            decode.low_alarm_active = Boolean(decode.status & 0x01);
+            decode.high_alarm_active = Boolean(decode.status & 0x02);
+            decode.low_battery = Boolean(decode.status & 0x04);
+            decode.sensor_error = Boolean(decode.status & 0x08);
+        }
+    }
+    else if (port == 2)
+    {
+        if (bytes.length != 7)
+        {
+            decode.error_msg = "Invalid FPort 2 uplink length: " + bytes.length;
+        }
+        else
+        {
+            decode.battery_v = ((bytes[1] << 8) | bytes[2]) / 1000;
+            decode.version = bytes[3].toString() + "." + bytes[4].toString().padStart(2, '0');
+            decode.pressure_span_psi = (bytes[5] << 8) | bytes[6];
+        }
+    }
+    else if (port == 3)
+    {
+        if (bytes.length != 10)
+        {
+            decode.error_msg = "Invalid FPort 3 uplink length: " + bytes.length;
+        }
+        else
+        {
+            decode.low_alarm_threshold = decodePressure(device_type, bytes[1], bytes[2]);
+            decode.high_alarm_threshold = decodePressure(device_type, bytes[3], bytes[4]);
+            decode.alarms_enabled = "0x" + bytes[5].toString(16);
+            decode.low_alarm_enabled = Boolean(decode.alarms_enabled & 0x01);
+            decode.high_alarm_enabled = Boolean(decode.alarms_enabled & 0x02);
+            decode.report_interval_sec = (bytes[6] << 8) | bytes[7];
+            decode.sample_interval_sec = (bytes[8] << 8) | bytes[9];
+        }
+    }
+    else
+    {
+        decode.error_msg = "Invalid uplink FPort: " + port;
+    }
+
+    return decode;
+}
